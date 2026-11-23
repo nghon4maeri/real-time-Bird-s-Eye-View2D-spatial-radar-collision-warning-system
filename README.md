@@ -1,58 +1,55 @@
 # Webcam Radar
 
-Biến webcam laptop thành radar 2D nhìn từ trên xuống: YOLO phát hiện người/đồ vật, ước lượng khoảng cách
-bằng hình học camera, cảnh báo 3 vùng **XANH / VÀNG / ĐỎ** theo 3 cung **TRÁI / GIỮA / PHẢI**.
+Turn a laptop webcam into a **real-time 2D spatial radar & collision warning system** (Bird's-Eye View): detects people and obstacles with YOLO, estimates metric floor positions via 2-axis (`pitch` + `roll`) camera geometry, Pose keypoints, and Depth Anything V2 (raised obstacles, step drop-offs, and overhead hazards), compensates for walking camera motion (`Ego-Motion`), maintains a 2D local occupancy grid with safe steering guidance, accelerates heavy math in Rust (`radar_rs`), and renders a **lightweight Web HUD (HTML5 Canvas 2D Radar + Web Spatial Audio)**.
 
-## Cài đặt
+## Demo Output
+
+![Webcam Radar demo on demo_street.mp4](assets/demo_preview.gif)
+
+- **High-resolution frame preview:** [assets/demo_preview.png](assets/demo_preview.png)
+- **Full rendered output video (647 frames):** [demo_output.mp4](demo_output.mp4) (rendered from [demo_street.mp4](demo_street.mp4) at `height=3.5m`, `pitch=36°`)
+
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Model `yolo11n.pt` và `yolo11n-pose.pt` sẽ tự tải ở lần chạy đầu.
-
-## Chạy
-
-```bash
-python web.py            # giao diện web: http://localhost:8000 (điện thoại cùng wifi: http://<IP-laptop>:8000)
-python radar.py          # cửa sổ OpenCV, điều khiển bằng phím (xem đầu file)
-```
-
-Giao diện web (`web.html`): trạng thái + 3 cung TRÁI/GIỮA/PHẢI, radar và camera (trên điện thoại radar lên đầu),
-nút chỉnh góc cúi / chiều cao / hiệu chỉnh. Khi NGUY HIỂM viền đỏ nhấp nháy và điện thoại rung; mất tín hiệu
-(camera, xử lý treo, mất wifi) hiện cảnh báo toàn màn hình.
-
-Tùy chọn chính của `web.py`: `--cam 1`, `--video file.mp4`, `--hfov 70`, `--height 1.5`, `--pitch 25`,
-`--no-pose`, `--no-depth` (nhanh hơn), `--threads 4`, `--det-every 3`, `--imgsz 320`, `--no-sensor` (không đọc cảm biến nghiêng), `--port 8000`.
-
-## Cách ước lượng khoảng cách
-
-| Nguồn | Cách tính |
-|---|---|
-| Điểm chạm sàn | Tia từ chân box cắt mặt sàn (biết chiều cao + góc cúi camera) |
-| Chiều cao vật | `Z = H / (tan góc_chân − tan góc_đỉnh)` với chiều cao trung bình theo lớp |
-| Pose (người) | Thân (dọc) dùng công thức góc, vai/đầu/bề rộng box (ngang) dùng `f·L/pixel`; gộp trung bình trọng số nghịch đảo phương sai, bỏ outlier |
-| Depth (Depth Anything V2 Small) | Độ sâu tương đối → mét nhờ neo (vật đo tốt + sàn); đo thêm cho vật bị cắt chân, quét vật cản theo cột ảnh (thấy cả tường/cửa) |
-| Kalman | Mỗi vật 1 track `[X, Z, vX, vZ]`, gộp mọi phép đo theo sai số từng cách, ghép bằng Mahalanobis |
-| Cảm biến nghiêng | Gia tốc kế màn hình laptop (Windows) → góc cúi camera tự động |
-
-Ký hiệu trên ảnh: `<` vật trong vùng mù (ép vào vùng ĐỎ), `~` đã hiệu chỉnh/bị che, `*` ước lượng bằng pose, `d` có dùng depth. Trên radar: chấm xám = điểm quét depth, mũi tên = vị trí dự đoán sau 1 s.
-
-## Hiệu chỉnh
-
-Bấm **Hiệu chỉnh**, đặt một vật cách camera đúng 2 m, click vào điểm vật chạm sàn. Các kích thước cơ thể
-(`TORSO`, `SHOULDER`, `HEAD`, `BOX_W`) ở đầu `radar.py` có thể chỉnh nếu đo thực tế lệch đều.
-
-## Test
+### Build the Rust acceleration module (`radar_rs`, optional)
+If Rust (`cargo`, `rustc`) and `maturin` are installed:
 
 ```bash
-python tests/test_geom.py   # hình học camera, calib, phân vùng
-python tests/test_pose.py   # ước lượng khoảng cách bằng pose
-python tests/test_kalman_depth.py   # Kalman + đổi depth ra mét
+cd radar_rs
+maturin develop --release
+# Optional direct WinRT accelerometer support (Windows):
+# maturin develop --release --features win-sensor
 ```
 
-## Hạn chế
+If `radar_rs` is not built, `core/accel.py` automatically falls back to an equivalent pure-Python/NumPy implementation.
 
-- Camera nhìn ngang hoặc ngửa lên thì vùng mù lớn (≈2.9 m ở 0°, cao 1.5 m); nên cúi ~20°.
-- Depth cần ít nhất 1 vật đo tốt (người thấy rõ thân, hoặc sàn) làm neo mới đổi ra mét được.
-- CPU: đủ 3 model (detect + pose + depth) ~4–5 FPS; tắt bớt bằng `--no-depth` / `--no-pose`.
+## Usage
+
+```bash
+python web.py                                 # Web HUD from webcam: http://localhost:8000
+python web.py --video demo_street.mp4 --no-sensor --height 3.5 --pitch 36
+python radar.py                               # Desktop OpenCV window (supports --pose --depth --kalman --sensor)
+```
+
+Key CLI options: `--cam`, `--video`, `--hfov`, `--height`, `--pitch`, `--no-pose`, `--no-depth`, `--no-sensor`, `--no-ego`, `--backend auto|pytorch|onnx|openvino`, `--depth-backend auto|pytorch|onnx|openvino`, `--det-every 3`, `--imgsz 320`, `--threads 4`, `--port 8000`.
+
+User settings (`pitch`, `offset`, `height`, `hfov`, `calib_dist`, `flip`, `muted`, `voice_enabled`, `spatial_audio`, `radar_range`) are automatically persisted to `config.json`.
+
+## Architecture
+
+- `core/`: `config.py`, `camera.py`, `estimator.py`, `tracker.py`, `depth.py`, `ego.py`, `accel.py`, `pipeline.py` (Threaded `FrameReader`, `AsyncDepthWorker`, `EgoMotionEstimator`, `RadarEngine`, `CameraHealthMonitor`).
+- `radar_rs/`: PyO3 Rust crate accelerating RANSAC/Huber depth fitting, `168×128` grid scanning + clustering + drop-off + overhead hazard detection, multi-tier occlusion resolution, `KalmanTrackerRs` (Ego-motion compensation + Hungarian assignment + Joseph form + adaptive TTL + TTC/CPA), and `OccupancyGridRs` (`60×60` local grid + VFH+ Safe Steering).
+- `web.py`, `web.html`, `static/`: Server-Sent Events (`/events`), on-demand MJPEG (`/stream`), `/state`, `/cmd`, Canvas 2D Radar (`radar.js`), Web Spatial Audio & speech alerts (`audio.js`), and HUD controller (`app.js`).
+
+## Testing & Benchmark
+
+```bash
+pytest -v
+python benchmark.py --video demo_street.mp4 --frames 150
+python benchmark.py --record out_dir --frames 120
+python benchmark.py --replay out_dir --frames 120
+```

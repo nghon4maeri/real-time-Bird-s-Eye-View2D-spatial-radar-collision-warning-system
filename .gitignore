@@ -3,3 +3,7 @@ __pycache__/
 *.onnx
 *.png
 *.jpg
+!assets/*.png
+radar_rs/target/
+config.json
+.pytest_cache/
